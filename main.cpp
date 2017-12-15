@@ -67,14 +67,16 @@ void drawCube(DrawElement *dw) {
  		p3.setPoint(vertexData[index2][0], vertexData[index2][1], vertexData[index2][2], 1.0f, 1.0f, 1.0f, 1.0f, vertexData[index2][3], vertexData[index2][4], vertexData[index0][5], vertexData[index0][6], vertexData[index0][7], 1);
 		dw->drawTriangle(&p1, &p2, &p3);
 	}
-
-
+	if (dw->isDeferred) {
+		dw->drawDeferred();
+	}
 }
 
 
 int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 	LPSTR lpCmdLine, int nCmdShow) {
 	DrawElement *dw = new DrawElement();
+	dw->isDeferred = true;
 	dw->initDevice();
 	/* World-View matrix */
 	dw->cameraPosition.setVect(0.0, 0.0, -3.0);
@@ -95,9 +97,12 @@ int WINAPI WinMain(HINSTANCE hinstance, HINSTANCE hPrevInstance,
 	matr tempMatrix;
 	double theta = 0.001f*PI;
 
+
+
 	QueryPerformanceFrequency(&dw->frequency_);
 	matr rotateMatrix;
 	while (true) {
+		theta = 0.1*PI / dw->fps_;
 		QueryPerformanceCounter(&dw->startTick);
 		dw->clearBuffer();
 		rotate_matrix(&rotateMatrix, theta, &rotateRow);

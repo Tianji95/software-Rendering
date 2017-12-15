@@ -36,6 +36,14 @@ public:
 	vect oriRight1, oriRight2;
 };
 
+class PixelOutput {
+public:
+	PixelOutput();
+	~PixelOutput();
+	vect normal;
+	vect color;
+	vect originPos;
+};
 
 
 class DrawElement {
@@ -55,6 +63,8 @@ public:
 	void drawScanLine(Scanline *scline);
 	void updateScene();
 	void loadTexture(char* filename);
+	void getTextureColor(vect* out, point* nowPoint);
+	void drawDeferred();
 
 
 	UINT renderMode;
@@ -74,7 +84,7 @@ public:
 	LARGE_INTEGER endTick = {};
 	LARGE_INTEGER frequency_ = {};
 	FLOAT fps_ = 60.0f;
-
+	bool isDeferred = false;
 private:
 	float ks = 1;//高光系数
 	float kd = 1;//漫反射光系数
@@ -90,6 +100,8 @@ private:
 
 	BITMAPINFO bmpInfo;//需要画的位图信息
 	unsigned char *textureBuffer;
+
+	PixelOutput *gBuffer;
 	UINT32 *bmpBuffer_;
 	double *zBuffer_;
 	UINT backGroundColor;

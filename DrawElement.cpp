@@ -22,6 +22,7 @@ Trapezoid::~Trapezoid() {
 }
 
 DrawElement::DrawElement() {
+	zBuffer_ = nullptr;
 	bmpBuffer_ = nullptr;
 	zBuffer_ = nullptr;
 }
@@ -29,6 +30,15 @@ DrawElement::DrawElement() {
 DrawElement::~DrawElement() {
 	this->destoryDevice();
 }
+
+
+PixelOutput::PixelOutput(){
+
+}
+
+PixelOutput::~PixelOutput() {
+}
+
 
 HRESULT DrawElement::initDevice()
 {
@@ -79,10 +89,26 @@ HRESULT DrawElement::initDevice()
 	bmpInfo.bmiHeader.biClrImportant = 0;
 	hBITMAP = CreateDIBSection(hMemDC, &bmpInfo, DIB_RGB_COLORS, (void**)&bmpBuffer_, NULL, 0);//创建一个可以直接写的buffer
 	zBuffer_ = new double[WINDOW_HEIGHT * WINDOW_WIDTH];
+	if (isDeferred) {
+		gBuffer = new PixelOutput[WINDOW_HEIGHT * WINDOW_WIDTH];
+	}
 	int i;
 	for (i = 0; i < WINDOW_HEIGHT * WINDOW_WIDTH; i++) {
 		zBuffer_[i]= -100;
+		if (isDeferred) {
+			this->gBuffer[i].color.x = -1;
+			this->gBuffer[i].color.y = -1;
+			this->gBuffer[i].color.z = -1;
+			this->gBuffer[i].normal.x = -1;
+			this->gBuffer[i].normal.y = -1;
+			this->gBuffer[i].normal.z = -1;
+			this->gBuffer[i].originPos.x = -1;
+			this->gBuffer[i].originPos.x = -1;
+			this->gBuffer[i].originPos.z = -1;
+		}
 	}
+
+
 	/*Z Buffer and Texture*/
 
 	/* set Projection parameters */
@@ -101,12 +127,26 @@ void DrawElement::clearBuffer() {
 	for (i = 0; i < WINDOW_HEIGHT * WINDOW_WIDTH; i++) {
 		this->bmpBuffer_[i] = 0x00000000;
 		zBuffer_[i] = -100;
+		if (isDeferred) {
+			this->gBuffer[i].color.x = -1;
+			this->gBuffer[i].color.y = -1;
+			this->gBuffer[i].color.z = -1;
+			this->gBuffer[i].normal.x = -1;
+			this->gBuffer[i].normal.y = -1;
+			this->gBuffer[i].normal.z = -1;
+			this->gBuffer[i].originPos.x = -1;
+			this->gBuffer[i].originPos.x = -1;
+			this->gBuffer[i].originPos.z = -1;
+		}
 	}
 }
 
 
 void DrawElement::destoryDevice() {
 	ReleaseDC(hwnd, hMemDC);
+	delete[] gBuffer;
+	delete[] zBuffer_;
+	delete[] bmpBuffer_;
 }
 
 LRESULT DrawElement::wndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -195,7 +235,7 @@ void DrawElement::drawTriangle(point* v1, point* v2, point*v3) {
 void DrawElement::randerTriangle(Trapezoid* trape) {
 	int firstLine= max((int)trape->top, 0);
 	int lastLine = min((int)trape->bottom, WINDOW_HEIGHT - 1);
-//#pragma omp parallel for
+#pragma omp parallel for
 	for (int h_idx = firstLine; h_idx < lastLine; h_idx++) {
 		Scanline scline;
 		initScanLine(&scline, h_idx, trape);
@@ -398,55 +438,72 @@ void DrawElement::drawScanLine(Scanline *scline) {
 	vect pointToCamera, pointToLight;
 	vect tempH, H;
 	vect normal;
-	int texture_xPos;
-	int texture_yPos;
+	vect textureColor;
 	double lightR, lightG, lightB;
 	double lightshini;
-	int position;
 	int R, G, B;
 	double sclinelen = scline->leftPoint.pos.x - scline->rightPoint.pos.x;
 	nowPoint = scline->leftPoint;
 	nowOriginPos = scline->oriLeftVect;
 	vect_normalize(&normal, &scline->leftPoint.nvect);
 
-		
-
-	for (; widthPos < scline->width && xPos < WINDOW_WIDTH; widthPos++, xPos++) {
+	for (; widthPos < scline->width && xPos < WINDOW_WIDTH && xPos >= 0; widthPos++, xPos++) {
 		double z = nowPoint.pos.z;
 		int pointPos = scline->y*WINDOW_WIDTH + xPos;
 		
 		if (z > this->zBuffer_[pointPos]) {
 			this->zBuffer_[pointPos] = z;
-			//消耗70-80fps
-			tempH.setVect(this->cameraPosition.x - nowOriginPos.x, this->cameraPosition.y - nowOriginPos.y, this->cameraPosition.z - nowOriginPos.z);
-			vect_normalize(&pointToCamera, &tempH);
-			tempH.setVect(this->lightPos.x - nowOriginPos.x, this->lightPos.y - nowOriginPos.y, this->lightPos.z - nowOriginPos.z);
-			vect_normalize(&pointToLight, &tempH);
-			tempH.setVect((pointToLight.x + pointToCamera.x)*0.5f, (pointToLight.y + pointToCamera.y)*0.5f, (pointToLight.z + pointToCamera.z)*0.5f);
-			vect_normalize(&H, &tempH);
-
-			//消耗10fps
-			double maxdot = max(vect_dotmul(&normal, &H), 0);
-			maxdot = maxdot*maxdot;
-			lightshini = this->ks * maxdot * maxdot;
-			lightR = this->lightSpecular.x * lightshini;
-			lightG = this->lightSpecular.y * lightshini;
-			lightB = this->lightSpecular.z * lightshini;
-
-			if (this->renderMode == COLOR_MODE) {
-				R = (int)(nowPoint.r * 255.0f*ke);
-				G = (int)(nowPoint.g * 255.0f*ke);
-				B = (int)(nowPoint.b * 255.0f*ke);
-				this->bmpBuffer_[pointPos] = ((int)(R * lightR) << 16) | ((int)(G*lightG)<< 8) | (int)(B*lightB);
+			if (isDeferred) {
+				if (this->renderMode == COLOR_MODE) {
+					R = (int)(nowPoint.r * 255.0f*ke);
+					G = (int)(nowPoint.g * 255.0f*ke);
+					B = (int)(nowPoint.b * 255.0f*ke);
+				}
+				else if (this->renderMode == TEXTURE_MODE) {
+					this->getTextureColor(&textureColor, &nowPoint);
+					R = textureColor.x;
+					G = textureColor.y;
+					B = textureColor.z;
+				}
+				this->gBuffer[pointPos].originPos.x = nowOriginPos.x;
+				this->gBuffer[pointPos].originPos.y = nowOriginPos.y;
+				this->gBuffer[pointPos].originPos.z = nowOriginPos.z;
+				this->gBuffer[pointPos].color.x = R;
+				this->gBuffer[pointPos].color.y = G;
+				this->gBuffer[pointPos].color.z = B;
+				this->gBuffer[pointPos].normal.x = normal.x;
+				this->gBuffer[pointPos].normal.y = normal.y;
+				this->gBuffer[pointPos].normal.z = normal.z;
 			}
-			else if (this->renderMode == TEXTURE_MODE) {
-				texture_xPos = (int)(nowPoint.u * (this->textureWidth-1) + 0.5f);
-				texture_yPos = (int)(nowPoint.v * (this->textureHeight-1) + 0.5f);
-				position = 3 * (texture_yPos * this->textureWidth + texture_xPos);
-				R = this->textureBuffer[position];
-				G = this->textureBuffer[position + 1];
-				B = this->textureBuffer[position + 2];
-				this->bmpBuffer_[pointPos] = ((int)(R * lightR) << 16) | ((int)(G*lightG) << 8) | (int)(B*lightB);
+			else {
+				//消耗70-80fps
+				tempH.setVect(this->cameraPosition.x - nowOriginPos.x, this->cameraPosition.y - nowOriginPos.y, this->cameraPosition.z - nowOriginPos.z);
+				vect_normalize(&pointToCamera, &tempH);
+				tempH.setVect(this->lightPos.x - nowOriginPos.x, this->lightPos.y - nowOriginPos.y, this->lightPos.z - nowOriginPos.z);
+				vect_normalize(&pointToLight, &tempH);
+				tempH.setVect((pointToLight.x + pointToCamera.x)*0.5f, (pointToLight.y + pointToCamera.y)*0.5f, (pointToLight.z + pointToCamera.z)*0.5f);
+				vect_normalize(&H, &tempH);
+
+				//消耗10fps
+				double maxdot = max(vect_dotmul(&normal, &H), 0);
+				maxdot = maxdot*maxdot;
+				lightshini = this->ks * maxdot * maxdot;
+				lightR = this->lightSpecular.x * lightshini;
+				lightG = this->lightSpecular.y * lightshini;
+				lightB = this->lightSpecular.z * lightshini;
+				if (this->renderMode == COLOR_MODE) {
+					R = (int)(nowPoint.r * 255.0f*ke);
+					G = (int)(nowPoint.g * 255.0f*ke);
+					B = (int)(nowPoint.b * 255.0f*ke);
+					this->bmpBuffer_[pointPos] = ((int)(R * lightR) << 16) | ((int)(G*lightG) << 8) | (int)(B*lightB);
+				}
+				else if (this->renderMode == TEXTURE_MODE) {
+					this->getTextureColor(&textureColor, &nowPoint);
+					R = textureColor.x;
+					G = textureColor.y;
+					B = textureColor.z;
+					this->bmpBuffer_[pointPos] = ((int)(R * lightR) << 16) | ((int)(G*lightG) << 8) | (int)(B*lightB);
+				}
 			}
 		}
 		nowOriginPos.x += scline->oriStepVect.x;
@@ -484,4 +541,107 @@ void DrawElement::updateScene() {
 void DrawElement::loadTexture(char* filename) {
 	unsigned char *data;
 	this->textureBuffer = stbi_load(filename, &this->textureWidth, &this->textureHeight, &this->textureChannal, 3);
+}
+
+
+void DrawElement::getTextureColor(vect* out, point* nowPoint) {
+	double texture_xPos;
+	double texture_yPos;
+	int texture_xPos_bottom, texture_xPos_top, texture_yPos_bottom, texture_yPos_top;
+	double interX, interY;
+	int position, positionTopRight, positionTopLeft, positionBottomRight, positionBottomLeft;
+	int R, G, B, RTopRight, GTopRight, BTopRight, RTopLeft, GTopLeft, BTopLeft, RBottomRight, GBottomRight, BBottomRight, RBottomLeft, GBottomLeft, BBottomLeft;
+
+
+	//纹理的双线性过滤(双线性插值)
+	texture_xPos = nowPoint->u * (this->textureWidth - 1);
+	texture_yPos = nowPoint->v * (this->textureHeight - 1);
+	texture_xPos_bottom = (int)texture_xPos;
+	texture_yPos_bottom = (int)texture_yPos;
+	if (nowPoint->u != 1.0f) {
+		texture_xPos_top = (int)(texture_xPos + 1.0f);
+		interX = texture_xPos - texture_xPos_bottom;
+
+	}
+	else {
+		texture_xPos_top = texture_xPos_bottom;
+		interX = 0;
+	}
+	if (nowPoint->v != 1.0f) {
+		texture_yPos_top = (int)(texture_yPos + 1.0f);
+		interY = texture_yPos - texture_yPos_bottom;
+	}
+	else {
+		texture_yPos_top = texture_yPos_bottom;
+		interY = 0;
+	}
+	positionTopRight = 3 * (texture_yPos_top * this->textureWidth + texture_xPos_top);
+	RTopRight = this->textureBuffer[positionTopRight];
+	GTopRight = this->textureBuffer[positionTopRight + 1];
+	BTopRight = this->textureBuffer[positionTopRight + 2];
+
+	positionTopLeft = 3 * (texture_yPos_top * this->textureWidth + texture_xPos_bottom);
+	RTopLeft = this->textureBuffer[positionTopLeft];
+	GTopLeft = this->textureBuffer[positionTopLeft + 1];
+	BTopLeft = this->textureBuffer[positionTopLeft + 2];
+
+	positionBottomRight = 3 * (texture_yPos_bottom * this->textureWidth + texture_xPos_top);
+	RBottomRight = this->textureBuffer[positionBottomRight];
+	GBottomRight = this->textureBuffer[positionBottomRight + 1];
+	BBottomRight = this->textureBuffer[positionBottomRight + 2];
+
+	positionBottomLeft = 3 * (texture_yPos_bottom * this->textureWidth + texture_xPos_bottom);
+	RBottomLeft = this->textureBuffer[positionBottomLeft];
+	GBottomLeft = this->textureBuffer[positionBottomLeft + 1];
+	BBottomLeft = this->textureBuffer[positionBottomLeft + 2];
+
+	R = (interX * RBottomLeft + (1.0f - interX)*RBottomRight)*interY + (interX * RTopLeft + (1.0f - interX)*RTopRight)*(1.0f - interY);
+	G = (interX * GBottomLeft + (1.0f - interX)*GBottomRight)*interY + (interX * GTopLeft + (1.0f - interX)*GTopRight)*(1.0f - interY);
+	B = (interX * BBottomLeft + (1.0f - interX)*BBottomRight)*interY + (interX * BTopLeft + (1.0f - interX)*BTopRight)*(1.0f - interY);
+
+	out->x = R;
+	out->y = G;
+	out->z = B;
+
+	//纹理的简单线性插值（最邻近插值）
+	//texture_xPos = (int)(nowPoint.u * (this->textureWidth-1) + 0.5f);
+	//texture_yPos = (int)(nowPoint.v * (this->textureHeight-1) + 0.5f);
+	//position = 3 * (texture_yPos * this->textureWidth + texture_xPos);
+	//R = this->textureBuffer[position];
+	//G = this->textureBuffer[position + 1];
+	//B = this->textureBuffer[position + 2];
+	//out->x = R;
+	//out->y = G;
+	//out->z = B;
+}
+
+void DrawElement::drawDeferred() {
+	vect tempH, H;
+	double lightR, lightG, lightB;
+	double lightshini;
+	vect pointToCamera, pointToLight;
+	int R, G, B;
+	int pixelNum = WINDOW_WIDTH * WINDOW_HEIGHT;
+//#pragma omp parallel for
+	for (int i = 0; i < pixelNum; i++) {
+		if (this->gBuffer[i].color.x < 0)continue;
+		tempH.setVect(this->cameraPosition.x - this->gBuffer[i].originPos.x, this->cameraPosition.y - this->gBuffer[i].originPos.y, this->cameraPosition.z - this->gBuffer[i].originPos.z);
+		vect_normalize(&pointToCamera, &tempH);
+		tempH.setVect(this->lightPos.x - this->gBuffer[i].originPos.x, this->lightPos.y - this->gBuffer[i].originPos.y, this->lightPos.z - this->gBuffer[i].originPos.z);
+		vect_normalize(&pointToLight, &tempH);
+		tempH.setVect((pointToLight.x + pointToCamera.x)*0.5f, (pointToLight.y + pointToCamera.y)*0.5f, (pointToLight.z + pointToCamera.z)*0.5f);
+		vect_normalize(&H, &tempH);
+
+		double maxdot = max(vect_dotmul(&this->gBuffer[i].normal, &H), 0);
+		maxdot = maxdot*maxdot;
+		lightshini = this->ks * maxdot * maxdot;
+		lightR = this->lightSpecular.x * lightshini;
+		lightG = this->lightSpecular.y * lightshini;
+		lightB = this->lightSpecular.z * lightshini;
+
+		R = this->gBuffer[i].color.x;
+		G = this->gBuffer[i].color.y;
+		B = this->gBuffer[i].color.z;
+		this->bmpBuffer_[i] = ((int)(R * lightR) << 16) | ((int)(G*lightG) << 8) | (int)(B*lightB);
+	}
 }
